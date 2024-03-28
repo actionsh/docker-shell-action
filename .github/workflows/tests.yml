@@ -1,0 +1,38 @@
+name: Tests
+on: [push]
+jobs:
+  hello:
+    strategy:
+      fail-fast: false
+      matrix:
+        container:
+          - 'alpine:3.16'
+          - 'archlinux:latest'
+          - 'centos:7'
+          - 'chimeralinux/chimera:latest'
+          - 'gentoo/stage3:amd64-openrc-20240325'
+          - 'ubuntu:trusty'
+          - 'ghcr.io/void-linux/void-glibc-full'
+    runs-on: ubuntu-latest
+    env:
+      DAY_OF_WEEK: Monday
+    steps:
+      - name: Start background container
+        uses: actionsh/docker-shell-action@main
+        with:
+          image: ${{ matrix.container }}
+
+      - name: Run commands in the container
+        shell: docker-shell {0}
+        run: |
+          set -x
+          set
+          sudo docker-shell-pkginstall neofetch || true
+          neofetch || cat /etc/motd || lsb_release -a
+          echo "qqq" >> "$GITHUB_PATH"
+
+      - name: Check the changes are available in the next step
+        shell: docker-shell {0}
+        run: |
+          set -x
+          echo "$PATH" | grep qqq || exit 1

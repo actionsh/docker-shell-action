@@ -1,0 +1,143 @@
+name: 'Docker Shell Action'
+description: 'Start a background container where chosen workflow steps can run shell commands'
+inputs:
+  image:
+    description: 'Container image'
+    required: true
+  options:
+    description: 'Docker options'
+    required: false
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        # Starting background container
+        workspace_parent="$(dirname "$GITHUB_WORKSPACE")"
+        inputs_args="$(env | awk -F= -v ORS=" " '/^INPUTS_/ {print "-e " $1}')"
+        docker run \
+          --name docker_shell \
+          -dit \
+          -v "$RUNNER_TEMP/:$RUNNER_TEMP" \
+          -v "$workspace_parent/:$workspace_parent" \
+          -v "/var/run/docker.sock:/var/run/docker.sock" \
+          -e CI \
+          -e DEBIAN_FRONTEND=noninteractive \
+          -e GITHUB_ACTION \
+          -e GITHUB_ACTION_PATH \
+          -e GITHUB_ACTIONS \
+          -e GITHUB_ACTOR \
+          -e GITHUB_API_URL \
+          -e GITHUB_BASE_REF \
+          -e GITHUB_ENV \
+          -e GITHUB_EVENT_NAME \
+          -e GITHUB_EVENT_PATH \
+          -e GITHUB_GRAPHQL_URL \
+          -e GITHUB_HEAD_REF \
+          -e GITHUB_JOB \
+          -e GITHUB_REF \
+          -e GITHUB_REPOSITORY \
+          -e GITHUB_RUN_ID \
+          -e GITHUB_RUN_NUMBER \
+          -e GITHUB_SERVER_URL \
+          -e GITHUB_SHA \
+          -e GITHUB_WORKFLOW \
+          -e GITHUB_WORKSPACE \
+          $inputs_args \
+          -e RUNNER_OS \
+          -e RUNNER_TEMP \
+          -e RUNNER_TOOL_CACHE \
+          -e RUNNER_WORKSPACE \
+          ${{ inputs.options }} \
+          "${{ inputs.image }}"
+
+        root_shell() {
+          xargs -0 docker exec docker_shell /bin/sh -euxc
+        }
+
+        root_shell <<'__EOF__'
+          # Determine distro
+          has() { type "$1" >/dev/null 2>/dev/null; }
+          {
+            echo '#!/bin/sh'
+            echo 'set -ex'
+            if has apk; then echo 'exec apk add "$@"'
+            elif has apt-get; then echo 'exec apt-get -qy install "$@"'
+            elif has emerge; then echo 'exec emerge "$@"'
+            elif has pacman; then echo 'exec pacman -S --noconfirm "$@"'
+            elif has yum; then echo 'exec yum install -q -y "$@"'
+            elif has xbps-install; then echo 'exec xbps-install -y "$@"'
+            else echo 'echo "$0": unknown distro 1>&2; exit 1'
+            fi
+          } > /usr/bin/docker-shell-pkginstall
+          chmod a+x /usr/bin/docker-shell-pkginstall
+
+          {
+            echo '#!/bin/sh'
+            echo 'set -ex'
+            if has apk; then echo 'exec apk update'
+            elif has apt-get; then echo 'exec apt-get -qy update'
+            elif has emerge; then echo 'exec emerge -q --sync'
+            elif has pacman; then echo 'exec pacman -Sy'
+            elif has yum; then echo 'exec yum update -q -y'
+            elif has xbps-install; then echo 'exec xbps-install -Sy'
+            else echo 'echo "$0": unknown distro 1>&2; exit 1'
+            fi
+          } > /usr/bin/docker-shell-pkgupdate
+          chmod a+x /usr/bin/docker-shell-pkgupdate
+        __EOF__
+
+        # Install unprivileged user with passwordless sudo access
+        uid="$(id -u)"
+        root_shell <<__EOF__
+          useradd -u "$uid" -s /bin/sh "$USER" \
+          || adduser -D -u "$uid" -s /bin/sh "$USER" \
+          || { apk add base-minimal chimera-repo-contrib opendoas && useradd -g wheel -u "$uid" -s /bin/sh "$USER"; }
+          chown "$USER" "$HOME"
+
+          type doas && ln -s "\$(which doas)" /usr/bin/sudo
+          type sudo || docker-shell-pkginstall sudo || {
+            docker-shell-pkgupdate
+            docker-shell-pkginstall sudo
+          }
+          #usermod -aG sudo "$USER" || usermod -aG wheel "$USER"
+          echo "$USER ALL=(ALL) NOPASSWD: ALL" >> "/etc/sudoers"
+          echo "permit nopass $USER" >> "/etc/doas.conf"
+        __EOF__
+
+        # Install shell wrapper
+        sudo tee /usr/bin/docker-shell <<'__EOF__'
+        #!/bin/sh
+        set -e
+        shell() {
+          jq -r 'keys[]' > "$RUNNER_TEMP/_envnames.tmp" <<___Eof
+        ${{ toJson(env) }}
+        ___Eof
+          docker exec -u "$USER" -w "$(pwd)" \
+            -e GITHUB_ENV \
+            -e GITHUB_OUTPUT \
+            -e GITHUB_PATH \
+            -e GITHUB_STATE \
+            -e GITHUB_STEP_SUMMARY \
+            -e PATH \
+            $(awk -v ORS=" " '{print "-e " $0}' < "$RUNNER_TEMP/_envnames.tmp") \
+            docker_shell /bin/sh "$@"
+        }
+        case "$1" in
+          -*) shell "$@" ;;
+          *)  shell -euc "$(cat "$@")" ;;
+        esac
+        __EOF__
+        sudo chmod a+x /usr/bin/docker-shell
+
+        # Copy ccache configuration from host if any; install ccache if needed
+        if [ -d "$HOME/.config/ccache" ]; then
+          docker-shell <<__EOF__
+            type ccache || sudo docker-shell-pkginstall ccache
+            mkdir -p "$HOME/.config/ccache"
+            # Older ccache versions use ~/.ccache only
+            ln -s .config/ccache "$HOME/.ccache"
+        __EOF__
+          docker-shell -c "tee $HOME/.config/ccache/ccache.conf" < "$HOME/.config/ccache/ccache.conf"
+          docker-shell -c "ccache -p; ccache -s"
+        fi
