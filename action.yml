@@ -113,7 +113,7 @@ runs:
           jq -r 'keys[]' > "$RUNNER_TEMP/_envnames.tmp" <<___Eof
         ${{ toJson(env) }}
         ___Eof
-          docker exec -u "$USER" -w "$(pwd)" \
+          docker exec -i -u "$USER" -w "$(pwd)" \
             -e GITHUB_ENV \
             -e GITHUB_OUTPUT \
             -e GITHUB_PATH \
@@ -130,14 +130,19 @@ runs:
         __EOF__
         sudo chmod a+x /usr/bin/docker-shell
 
-        # Copy ccache configuration from host if any; install ccache if needed
+        # Copy ccache configuration from host if any; install ccache
+        set -x
         if [ -d "$HOME/.config/ccache" ]; then
-          docker-shell <<__EOF__
-            type ccache || sudo docker-shell-pkginstall ccache
-            mkdir -p "$HOME/.config/ccache"
-            # Older ccache versions use ~/.ccache only
-            ln -s .config/ccache "$HOME/.ccache"
-        __EOF__
+          # Ensure the same ccache version is installed both on host and in container
+          curl -L https://github.com/tuffnatty/ccache-static/releases/download/v4.9.1/ccache-linux-x86_64-static-4.9.1.zst \
+            | zstdcat \
+            | sudo tee /usr/bin/ccache >/dev/null
+          sudo chmod a+x /usr/bin/ccache
+          ls -l /usr/bin/ccache
+          docker-shell -c 'sudo tee /usr/bin/ccache >/dev/null; sudo chmod a+x /usr/bin/ccache; ls -l /usr/bin/ccache' < /usr/bin/ccache
+          docker-shell -c 'type ccache || sudo docker-shell-pkginstall ccache'
+          docker-shell -c "mkdir -p $HOME/.config/ccache"
           docker-shell -c "tee $HOME/.config/ccache/ccache.conf" < "$HOME/.config/ccache/ccache.conf"
+          ccache -z
           docker-shell -c "ccache -p; ccache -s"
         fi
