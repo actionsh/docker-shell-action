@@ -3,7 +3,7 @@
 [![GitHub Actions Status](https://github.com/actionsh/docker-shell-action/actions/workflows/tests.yml/badge.svg)](https://github.com/actionsh/docker-shell-action/actions/workflows/tests.yml)
 
 GitHub action that starts a background container where chosen workflow steps can run shell commands by specifying `shell: docker-shell {0}`.
-A runner user with `sudo` access is created in the container, and the workspace parent directory is mounted in the container at the same path.
+A runner user with `sudo` access is created in the container, and the workspace parent directory, docker socket, and RUNNER_TEMP are mounted in the container at the same path.
 
 It is useful for cases where you can't [run the whole workflow job in your container](https://docs.github.com/en/actions/using-jobs/running-jobs-in-a-container) as the container is [not compatible with GitHub Runner](https://github.com/actions/runner/issues/2906).
 
