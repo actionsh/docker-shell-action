@@ -110,17 +110,8 @@ runs:
         #!/bin/sh
         set -e
         shell() {
-          jq -r 'keys[]' > "$RUNNER_TEMP/_envnames.tmp" <<___Eof
-        ${{ toJson(env) }}
-        ___Eof
           docker exec -i -u "$USER" -w "$(pwd)" \
-            -e GITHUB_ENV \
-            -e GITHUB_OUTPUT \
-            -e GITHUB_PATH \
-            -e GITHUB_STATE \
-            -e GITHUB_STEP_SUMMARY \
-            -e PATH \
-            $(awk -v ORS=" " '{print "-e " $0}' < "$RUNNER_TEMP/_envnames.tmp") \
+            $(export -p | awk -F= -v ORS=' ' '{sub(/^export /, "-e "); print $1}') \
             docker_shell /bin/sh "$@"
         }
         case "$1" in
